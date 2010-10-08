@@ -1,0 +1,394 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+MIT License - http://www.opensource.org/licenses/mit-license.html
+
+Copyright (c) 2010 paddy.keane
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+-->
+<mx:HBox
+	xmlns:mx="http://www.adobe.com/2006/mxml"
+	horizontalAlign="center"
+	horizontalScrollPolicy="off"
+	creationComplete="init()"
+	>
+	<!-- Events dispatched by this View Component -->
+	<mx:Metadata>
+		[Event(name="pageChange", 		type="pdkn.flex.components.events.PaginateEvent")]
+		[Event(name="totalPagesChange", type="pdkn.flex.components.events.PaginateEvent")]
+	</mx:Metadata>
+			
+	<mx:Script>
+		<![CDATA[
+		
+		import mx.controls.Alert;
+        import mx.controls.Button;
+        import mx.collections.ArrayCollection;
+		import mx.events.*;
+		
+		import pdkn.flex.components.events.PaginateEvent;
+			
+		private var _itemsTotal			: int = 0;
+		private var _itemsPerPage		: int = 1;
+		private var _selectedIndex		: int = 0;
+		private var _startRangeIndex	: int = 1;
+		private var _rangeCount			: int = 0;
+		
+		private var _selectedBtn		: Button;
+		
+		
+		protected var __pages				: int;
+		
+		[Bindable]
+		protected var _btnWidth			: int = 40;
+		
+		[Bindable]
+		protected var arr					: ArrayCollection = new ArrayCollection();	
+		
+		// helps fix an issue with scrollThumb jumping around
+		// when scrollTrack is clicked
+		private var scrollTrackMouseDown: Boolean = false;
+		
+		private function init():void
+		{
+			prevBtn.addEventListener(MouseEvent.CLICK, nudgeHandler);
+			nextBtn.addEventListener(MouseEvent.CLICK, nudgeHandler);
+			scroller.addEventListener(MouseEvent.MOUSE_UP, scrollerMouseUpHandler);
+			selectedIndex = _selectedIndex;
+		}
+		
+		/**
+		 * how many list items per page 
+		 */	
+		public function set itemsPerPage (n:int):void
+		{
+			if (n == itemsPerPage) return;
+			_itemsPerPage = n;
+			update();
+			//trace("SET ITEMS PER PAGE");
+		}
+		
+		public function get itemsPerPage ():int
+		{
+			return _itemsPerPage;
+		}
+		
+		/**
+		 * Total amount of items to navigate 
+		 */
+		public function set itemsTotal (n:int):void
+		{
+			if (n == itemsTotal) return;
+			_itemsTotal = n;
+			update();
+			//trace("SET ITEMS TOTAL");
+		}
+		
+		public function get itemsTotal ():int
+		{
+			return _itemsTotal;
+		}
+		
+		/**
+		 * The selected page index 
+		 */	
+		public function set selectedIndex (n:int):void
+		{
+			n = Math.max(0, n);
+			// make sure Component is initialized or it throws an error
+			if (this.initialized)
+			{
+				// set selected button
+				if (pageItemHBox.numChildren > 0)
+				{
+					var btn:Button = pageItemHBox.getChildAt(n) as Button;
+		            if(_selectedBtn != null)_selectedBtn.selected = false;
+		            _selectedBtn = btn;
+		            _selectedBtn.selected = true;
+				}
+	            
+	            // if approriate center selected button
+	            var halfRange:int = Math.round(rangeCount/2);
+	            if (n < halfRange -1)
+	            {
+	            	movePage(0);
+	            }
+	            else if (n > (arr.length - halfRange))          
+				{
+					movePage(-(arr.length - rangeCount) * _btnWidth);
+				} 
+				else
+				{
+					
+					movePage( -Math.round((n+1) * _btnWidth) + (halfRange * _btnWidth));
+				}
+				
+				// disable/enable next/previous buttons if selectedIndex is first or last page
+				prevBtn.enabled = (n == 0 || pageItemHBox.numChildren == 0) ? false : true;
+				nextBtn.enabled = (n == arr.length-1) ? false : true;
+				
+				// dispatch a PaginateEvent					
+				var evt:PaginateEvent = new PaginateEvent (PaginateEvent.PAGE_CHANGE, true);
+				evt.index = n;
+				evt.itemsPerPage = itemsPerPage;
+				evt.itemsTotal = itemsTotal;
+				
+				dispatchEvent(evt);
+   			}
+   			
+   			// store selected index
+            _selectedIndex = n;	
+			
+		}
+		
+		public function get selectedIndex ():int
+		{
+			return _selectedIndex;
+		}
+		
+		/**
+		 * How many page buttons to display 
+		 */	
+		[Bindable]
+		public function set rangeCount (n:int):void
+		{
+			_rangeCount = n;
+			
+			scroller.maxScrollPosition = pages - rangeCount;
+			scroller.scrollPosition = Math.min(scroller.scrollPosition, scroller.maxScrollPosition);
+			movePage(-Math.round(scroller.scrollPosition * _btnWidth));
+		}
+		
+		public function get rangeCount ():int
+		{
+			return _rangeCount;
+		}
+		
+		/**
+		 * currently read only. Maybe there's a usecase for setting pages dynamically?
+		 */	
+		[Bindable]
+		public function get pages ():int
+		{
+			trace("get page");
+			return __pages;
+		}
+		
+		public function set pages (p:int):void
+		{
+			__pages = p;
+			trace("set page");
+		}
+			
+		/**
+		 * Called when parameters that effect number of pages are changed
+		 **/
+		private function update():void
+		{
+			
+			pages = Math.ceil(itemsTotal/itemsPerPage);
+			
+			//trace("pages = " + _pages);
+			
+			var btn:Button;			
+			var i:int;
+			if (arr.length < pages)		
+			{
+				//trace("ADD pages");
+				for ( i = arr.length; i < pages ; i++)
+				{
+					arr.addItem({label:String(i+1) as String, data:i});
+					
+					btn = new Button();
+        			btn.width=_btnWidth;
+                	btn.label=String(i+1) as String;
+                	btn.data=i;
+                	btn.addEventListener(MouseEvent.CLICK, pageClickHandler);
+                	btn.setStyle("paddingLeft",0);
+        			btn.setStyle("paddingRight",0);
+        			btn.setStyle("cornerRadius",0);
+		                    	
+					pageItemHBox.addChildAt(btn, i);
+					
+					
+				}
+			}
+			else if (arr.length > pages)
+			{
+				//trace("REMOVE pages");
+				for ( i = arr.length-1; i >= pages ; i--)
+				{
+					arr.removeItemAt(i);
+					         	
+					btn = Button(pageItemHBox.removeChildAt(i)) as Button;
+					btn.removeEventListener(MouseEvent.CLICK, pageClickHandler);
+					btn.width = 0;
+					
+				}
+			}
+			
+			//trace("arr.length = " + arr.length);
+			
+		 	scroller.invalidateDisplayList();
+		 	
+		 	selectedIndex = Math.min(selectedIndex, arr.length-1);
+		 		 	
+			var evt:PaginateEvent = new PaginateEvent (PaginateEvent.TOTAL_PAGES_CHANGE, true);
+			evt.index = selectedIndex;
+			evt.itemsPerPage = itemsPerPage;
+			evt.itemsTotal = itemsTotal;
+			
+			dispatchEvent(evt);
+			
+		}
+		
+		/**
+		 * Page Click Event Handler
+		 */	
+        private function pageClickHandler(evt:Event):void
+        {
+            var btn:Button = evt.currentTarget as Button;
+            selectedIndex = btn.data as int;
+        }
+        
+        /**
+		 * Next/Previous Click Event Handler
+		 */	
+        private function nudgeHandler(e:MouseEvent):void
+        {
+        	switch (e.target)
+        	{
+        		case prevBtn:
+	        		if (selectedIndex > 0) --selectedIndex;
+	        		break;
+        		case nextBtn:
+        			if (selectedIndex < arr.length - 1) ++selectedIndex;
+        			break;
+        	}
+           
+        }
+        
+        /**
+		 * Scroll Event Handler
+		 */	
+        private function scrollHandler(e:ScrollEvent):void
+        {
+        	/*
+        	trace("Scroll position = " + e.position);
+        	trace("pageMove.isPlaying = " + pageMove.isPlaying);
+        	trace("e.delta = " + e.delta);
+        	trace("e.detail = " + e.detail);
+        	*/
+        	
+        	// if Scroll Track is clicked, wait till mouse up event
+        	// else scroll Thumb gets jumpy
+        	if (e.detail == "pageLeft" || e.detail == "pageRight") 
+        	{
+        		scrollTrackMouseDown = true;
+        		return;
+       		}
+            movePage(-(e.position * _btnWidth));
+        }
+        
+        /**
+		 * fixes a issues that makes the scrollThumb jump around with
+		 * clicking the scrollTrack
+		 */	
+        private function scrollerMouseUpHandler(e:MouseEvent):void
+        {
+        	
+        	if (scrollTrackMouseDown) 
+        	{
+        		scrollTrackMouseDown = false;
+        		movePage(-Math.round(scroller.scrollPosition * _btnWidth));
+       		}
+            
+        }
+        
+        /**
+		 * tween page button view
+		 */	
+        private function movePage(xPos:int):void
+        {        	
+        	// make sure move doesn't go past max range
+        	var max: int =  -(pageItemHBox.width -(rangeCount * _btnWidth));
+        	if (xPos < max) xPos = max;
+        	
+        	// make sure move doesn't go past 0
+        	xPos = Math.min(0, xPos);
+        	        	
+            pageMove.end();
+            pageMove.xTo = xPos; 
+            pageMove.play();
+        }
+        
+        
+        
+        ]]>
+	</mx:Script>
+
+	<mx:Move id="pageMove" target="{pageItemHBox}"/>
+	
+	<!-- FIRST ELEMENT -->
+	<mx:Button id="prevBtn"
+		label="&lt; Prev"
+		visible="{pages > 1}"
+		/>
+	    
+	<mx:VBox id="holder" width="{Math.min((rangeCount * _btnWidth), (pages * _btnWidth))}" horizontalScrollPolicy="off">
+		<!-- MIDDLE ELEMENT -->
+		<mx:Canvas id="middleElement" width="100%" height="100%" horizontalScrollPolicy="off">
+			<mx:HBox id="pageItemHBox" horizontalScrollPolicy="off" horizontalGap="0">
+				<!-- DO NOT USE A REPEATER AS V SLOW AND CPU INTENSIVE
+				<mx:Repeater id="pageRepeater" dataProvider="{arr}">
+		            <mx:Button id="btn"
+		            			paddingLeft="0"
+		            			paddingRight="0" 
+		            			cornerRadius="0"
+		            			width="{_btnWidth}"
+		                    	label="{pageRepeater.currentItem.label}"
+		                    	data="{pageRepeater.currentItem.data}"
+		                    	click="pageClickHandler(event)"
+		                     />
+		        </mx:Repeater>
+		        -->
+			</mx:HBox>
+		</mx:Canvas>
+		
+		<mx:HScrollBar id="scroller"
+		 			minScrollPosition="0"
+		 			maxScrollPosition="{pages - rangeCount}" 
+         			lineScrollSize="{_btnWidth}"
+        			pageSize="{rangeCount}"
+         			pageScrollSize="{rangeCount - 1}" 
+					width="100%"
+					scrollPosition="{-(pageItemHBox.x / _btnWidth)}"
+					visible="{pages  > rangeCount}"
+					includeInLayout="{pages > rangeCount}"
+					scroll="scrollHandler(event)"
+				/>
+	</mx:VBox>		
+			
+	<!-- LAST ELEMENT -->
+	<mx:Button id="nextBtn"
+		label="Next &gt;"
+		visible="{pages > 1}"
+	/>
+	
+</mx:HBox>
